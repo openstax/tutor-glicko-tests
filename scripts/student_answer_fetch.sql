@@ -19,7 +19,7 @@ SELECT er.research_identifier,
           WHEN task_type = 7 THEN 'extra'
           WHEN task_type = 8 THEN 'concept_coach'
           WHEN task_type = 9 THEN 'practice_worst_topics'
-       END AS 'type',
+       END AS "type",
        cpc.homework_score_weight,
        cpc.homework_progress_weight,
        cpc.reading_score_weight,
@@ -55,5 +55,5 @@ WHERE answer_id IS NOT NULL
     AND tt.last_worked_at > '2019/01/01'::timestamptz
     AND NOT cpc.is_preview
     AND NOT cpc.is_test
-ORDER BY response_time, research_identifier, assignment_id
+ORDER BY response_timestamp, research_identifier, assignment_id
 ;
