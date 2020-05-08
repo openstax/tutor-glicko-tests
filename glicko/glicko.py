@@ -44,8 +44,7 @@ class Glicko2(object):
         self.__dict__ = default_params
         self.__dict__.update((k, v) for k, v in kwargs.items() if k in allowed_keys)
 
-        # Make dataframes for the students and questions
-        # We maintain these separately for computational simplicity
+        # Create a single dataframe for students and questions -- each one is an "entity"
         self.df_entities = pd.DataFrame(columns=
             [
                 ENTITY_COL,
@@ -58,6 +57,7 @@ class Glicko2(object):
         )
 
     def prep_df(self, df):
+        # Rename columns and then append a "flipped" dataframe where questions compete against students
         df = df.rename(columns={STUDENT: ENTITY_1, QUESTION: ENTITY_2})
         df_app = df.rename(columns={ENTITY_1: ENTITY_2, ENTITY_2: ENTITY_1})
         df_app[SCORE] = df_app[SCORE].astype(int).apply(lambda x: x^1)
@@ -191,8 +191,7 @@ class Glicko2(object):
         self.df_entities.update(dft)
 
         # TODO: Finally apply the phi transformation on non-participants
-
-        return dft
+        non_participants = df
 
     def fit(self, dataframe):
         # dataframe has columns student, question, score
@@ -220,16 +219,22 @@ class Glicko2(object):
         df_params = self.update_sigma_prime(df_params)
 
         # Step 6, 7, 8) Update the ratings and deviations
-        df_params = self.update_ratings(df_params)
+        self.update_ratings(df_params)
 
+    def predict(self, dataframe):
+        # Merge in the parameters for the dataframe
+        cols = dataframe.columns.values.tolist()
+        map = dict(zip(cols, [ENTITY_1, ENTITY_2]))
+        rev_map = dict(zip([ENTITY_1, ENTITY_2], cols))
+        df = dataframe.rename(columns=map)
+        df = self.get_parameters(df)
 
+        # Compute the mu delta between the two and compute a success probability
+        df['delta'] = df['mu_1'] - df['mu_2']
+        df['p'] = 1 / (1 + np.exp(-df['phi_2'] * df['delta']))
+        df = df.rename(columns=rev_map)
+        return df[['student', 'question', 'p']]
 
-
-
-
-
-    def update(self, dataframe):
-        pass
 
     def generate_synthetic_data(self, N_students, N_questions, p_obs=1):
 
