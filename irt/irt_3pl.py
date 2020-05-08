@@ -2,6 +2,7 @@
 
 import numpy as np
 from scipy.stats import norm
+import pandas as pd
 from time import time
 import enum
 
@@ -9,7 +10,7 @@ default_params = {
     'model_name': '2pl', 'mu_theta':0, 'sigma_theta':1,
     'mu_alpha': 1, 'sigma_alpha': 1, 'mu_beta': 0,
     'sigma_beta': 1, 'alpha_gamma': 1, 'beta_gamma': 3,
-    'T': 10000, 'burnin': 1000, 'thinning': 1
+    'T': 1000, 'burnin': 100, 'thinning': 1
 }
 
 class Model(enum.Enum):
@@ -32,6 +33,13 @@ class IRT3PL(object):
             self.model = Model._1pl
             self.sigma_alpha = 1e-6
 
+    def convert_dataframe(self, df):
+
+        data = df.pivot('student', 'question', 'score')
+        self.data = data.values.astype(float)
+        self.students = data.index.values
+        self.questions = data.columns.values
+        return data.values.astype(float)
 
     def truncnorm(self, a_t, b_t, mu_t, sigma_t):
         #Create the mask matrix for dealing with missing data (nans)
@@ -73,13 +81,23 @@ class IRT3PL(object):
         self.gamma_mcmc = np.zeros((Q, samples_to_save))
         
     def save_samples(self, W, Z, theta, alpha, beta, gamma, t):
-        idx = (t-self.burnin) / self.thinning
+        idx = int((t-self.burnin) / self.thinning)
         self.W_mcmc = self.W_mcmc + 1.0*W / ((self.T - self.burnin)/self.thinning)
         self.theta_mcmc[:, idx:idx+1] = theta
         self.beta_mcmc[:, idx:idx+1] = beta
         self.alpha_mcmc[:, idx:idx+1] = alpha
         self.gamma_mcmc[:, idx:idx+1] = gamma
-        
+
+    def compute_posterior_means(self):
+        theta_hat = np.mean(self.theta_mcmc, axis=1)
+        beta_hat = np.mean(self.beta_mcmc, axis=1)
+        gamma_hat = np.mean(self.gamma_mcmc, axis=1)
+        alpha_hat = np.mean(self.alpha_mcmc, axis=1)
+        self.theta_df = pd.DataFrame({'student': self.students, 'theta': theta_hat})
+        self.beta_df = pd.DataFrame({'question': self.questions, 'beta': beta_hat})
+        self.gamma_df = pd.DataFrame({'question': self.questions, 'gamma': gamma_hat})
+        self.alpha_df = pd.DataFrame({'question': self.questions, 'alpha': alpha_hat})
+
     def sample_W(self, Y, eta, gamma):
         if self.model == Model._3pl:
             gamma_temp = np.tile(gamma.T, (self.N, 1))
@@ -100,6 +118,9 @@ class IRT3PL(object):
         B[W==1] = np.inf
         Z = self.truncnorm(A, B, eta, Sigma)
         Z[np.isnan(W)] = np.nan
+        if (np.sum(np.isinf(Z))>0):
+            print("screeaaaam")
+        Z[np.isinf(Z)] = np.nan
         return Z
         
     def sample_theta(self, Z, beta, alpha):
@@ -125,7 +146,7 @@ class IRT3PL(object):
             post_add = np.array([self.mu_alpha, self.mu_beta])
             post_add.shape = (2, 1)
             post_add = np.dot(Sigma_xi_inv, post_add)
-            mu_t = np.dot(cov, np.dot(x.T, Z[valid_student_idx, jj:jj+1]) + post_add) 
+            mu_t = np.dot(cov, np.dot(x.T, Z[valid_student_idx, jj:jj+1]) + post_add)
             xi[:, jj] = np.random.multivariate_normal(mu_t[:,0], cov)
             
         alpha = xi[0:1,:].T
@@ -143,12 +164,31 @@ class IRT3PL(object):
                 gamma[gg] = np.random.beta(self.alpha_gamma + b[gg], self.beta_gamma - b[gg] + a[gg])
         return gamma
 
-    def predict(self):
-        return 0
-        
-    def fit(self, data, theta_init=None, beta_init=None, alpha_init=None, gamma_init=None):
+    def predict(self, dataframe):
+        # dataframe contains columns student, question
+        # we will look up the posterior estimates and model to calculate a success prob and return a new df
 
-        self.data = data
+        # Merge in the current posterior estimates . . . fillna as needed
+        dataframe = dataframe[['student', 'question']]
+        dataframe = dataframe.merge(self.theta_df, how='left')
+        dataframe['theta'] = dataframe['theta'].fillna(self.mu_theta)
+        dataframe = dataframe.merge(self.beta_df, how='left')
+        dataframe['beta'] = dataframe['beta'].fillna(self.mu_beta)
+        dataframe = dataframe.merge(self.alpha_df, how='left')
+        dataframe['alpha'] = dataframe['alpha'].fillna(self.mu_alpha)
+        dataframe = dataframe.merge(self.gamma_df, how='left')
+        dataframe['gamma'] = dataframe['gamma'].fillna(0)
+
+        # Now compute P(y=1) and return the cols that matter
+        dataframe['p0'] = norm.cdf(dataframe['alpha'] * dataframe['theta'] - dataframe['beta'])
+        dataframe['p'] = dataframe['gamma'] + (1-dataframe['gamma'])*dataframe['p0']
+        return dataframe[['student', 'question', 'p']]
+
+    def fit(self, dataframe, theta_init=None, beta_init=None, alpha_init=None, gamma_init=None):
+        # data is a pandas dataframe of the form student_id, question_id, score
+        # We'll convert this into a N x Q matrix and store off the ids for later use
+        data = self.convert_dataframe(dataframe)
+
         self.N, self.Q = data.shape
         
         t_w = np.zeros(self.T)
@@ -223,6 +263,7 @@ class IRT3PL(object):
         self.t_g = t_g
         self.t_th = t_th
         self.t_ab = t_ab
+        self.compute_posterior_means()
 
     def compute_LL(self, data, theta, alpha, beta, gamma):
 
@@ -265,8 +306,16 @@ class IRT3PL(object):
         P = norm.cdf(eta) + G*(1-norm.cdf(eta))
         Y = 1.0*(np.random.rand(N, Q) < P)
         
-        #Sample Y uniformly according to p_obs
-        P_punc = np.random.rand(N, Q) < (1-p_obs)
-        Y[P_punc] = np.nan
-        return Y, theta, beta, alpha, gamma
+        # Reshape everything into dataframes, sample, and return
+        student_ids = ['S' + str(ii) for ii in range(0, N)]
+        question_ids = ['Q' + str(ii) for ii in range(0, Q)]
+        Y_df = pd.DataFrame(Y, columns=question_ids)
+        Y_df['student'] = student_ids
+        Y_df = pd.melt(Y_df, 'student', var_name='question', value_name='score')
+        theta_df = pd.DataFrame({'student': student_ids, 'theta': theta[:, 0]})
+        beta_df = pd.DataFrame({'question': question_ids, 'beta': beta[:, 0]})
+        alpha_df = pd.DataFrame({'question': question_ids, 'alpha': alpha[:, 0]})
+        gamma_df = pd.DataFrame({'questin': question_ids, 'gamma': gamma[:, 0]})
+
+        return Y_df.sample(frac=p_obs), Y_df, theta_df, beta_df, alpha_df, gamma_df
 

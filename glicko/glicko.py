@@ -5,15 +5,18 @@
 import numpy as np
 import pandas as pd
 
+# Default parameters
 default_params = {
     'tau': .5,
     'default_rating': 1500,
     'default_RD': 350,
     'default_volatility': .06,
     'default_standardization': 173.7178,
-    'tolerance': 1e-6
+    'tolerance': 1e-6,
+    'update_non_participants': False
 }
 
+# Some column definitions
 ENTITY_COL = 'entity'
 ENTITY_1 = 'entity_1'
 ENTITY_2 = 'entity_2'
@@ -23,7 +26,6 @@ ENTITY_VOLATILITY = 'volatility'
 VOLATILITY_PRIME = 'volatility_prime'
 ENTITY_MU = 'mu'
 ENTITY_PHI = 'phi'
-NUMERIC_COLS = [ENTITY_RATING, ENTITY_RD, ENTITY_VOLATILITY, ENTITY_MU, ENTITY_PHI]
 MU = 'mu'
 MU_1 = 'mu_1'
 MU_2 = 'mu_2'
@@ -36,6 +38,8 @@ SCORE_DEVIATION = 'score_deviation'
 STUDENT = 'student'
 QUESTION = 'question'
 SCORE = 'score'
+NUMERIC_COLS = [ENTITY_RATING, ENTITY_RD, ENTITY_VOLATILITY, ENTITY_MU, ENTITY_PHI]
+
 
 class Glicko2(object):
     def __init__(self, **kwargs):
@@ -188,10 +192,10 @@ class Glicko2(object):
                                   VOLATILITY_PRIME: ENTITY_VOLATILITY
                                   }
                         )
+
         self.df_entities.update(dft)
 
         # TODO: Finally apply the phi transformation on non-participants
-        non_participants = df
 
     def fit(self, dataframe):
         # dataframe has columns student, question, score
