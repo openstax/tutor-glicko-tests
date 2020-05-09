@@ -181,7 +181,7 @@ class IRT3PL(object):
 
         # Now compute P(y=1) and return the cols that matter
         dataframe['p0'] = norm.cdf(dataframe['alpha'] * dataframe['theta'] - dataframe['beta'])
-        dataframe['p'] = dataframe['gamma'] + (1-dataframe['gamma'])*dataframe['p0']
+        dataframe['p'] = dataframe['gamma']*(1-dataframe['p0']) + dataframe['p0']
         return dataframe[['student', 'question', 'p']]
 
     def fit(self, dataframe, theta_init=None, beta_init=None, alpha_init=None, gamma_init=None):
