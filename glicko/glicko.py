@@ -7,13 +7,15 @@ import pandas as pd
 
 # Default parameters
 default_params = {
+    'model_name': 'glicko',
     'tau': .5,
     'default_rating': 1500,
     'default_RD': 350,
     'default_volatility': .06,
     'default_standardization': 173.7178,
     'tolerance': 1e-6,
-    'update_non_participants': False
+    'update_non_participants': False,
+    'update_questions': True,
 }
 
 # Some column definitions
@@ -45,6 +47,7 @@ class Glicko2(object):
     def __init__(self, **kwargs):
 
         # Update the default parameters with kwargs, if applicable
+        allowed_keys = default_params.keys()
         self.__dict__ = default_params
         self.__dict__.update((k, v) for k, v in kwargs.items() if k in allowed_keys)
 
@@ -61,11 +64,12 @@ class Glicko2(object):
         )
 
     def prep_df(self, df):
-        # Rename columns and then append a "flipped" dataframe where questions compete against students
+        # Rename columns and then (optionally) append a "flipped" dataframe where questions compete against students
         df = df.rename(columns={STUDENT: ENTITY_1, QUESTION: ENTITY_2})
-        df_app = df.rename(columns={ENTITY_1: ENTITY_2, ENTITY_2: ENTITY_1})
-        df_app[SCORE] = df_app[SCORE].astype(int).apply(lambda x: x^1)
-        df = df.append(df_app)
+        if self.update_questions:
+            df_app = df.rename(columns={ENTITY_1: ENTITY_2, ENTITY_2: ENTITY_1})
+            df_app[SCORE] = df_app[SCORE].astype(int).apply(lambda x: x^1)
+            df = df.append(df_app)
         return df
 
     def update_entities(self, df):
@@ -185,15 +189,18 @@ class Glicko2(object):
         df['rd_prime'] = self.default_standardization * df['phi_prime']
 
         # Update the original data frame, skew the rds for the non-participating entities in the round
-        dft = df[[ENTITY_COL, 'r_prime', 'rd_prime', 'phi_prime', VOLATILITY_PRIME]]
+        dft = df[[ENTITY_COL, 'r_prime', 'mu_prime', 'rd_prime', 'phi_prime', VOLATILITY_PRIME]]
         dft = dft.rename(columns={'r_prime': ENTITY_RATING,
+                                  'mu_prime': MU,
                                   'rd_prime': ENTITY_RD,
                                   'phi_prime': ENTITY_PHI,
                                   VOLATILITY_PRIME: ENTITY_VOLATILITY
                                   }
                         )
+        dft = dft.reset_index().drop(columns=['index'])
 
-        self.df_entities.update(dft)
+        self.df_entities = self.df_entities[~self.df_entities[ENTITY_COL].isin(dft[ENTITY_COL])]
+        self.df_entities = self.df_entities.append(dft).reset_index().drop(columns=['index'])
 
         # TODO: Finally apply the phi transformation on non-participants
 
